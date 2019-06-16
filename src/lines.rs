@@ -1,4 +1,4 @@
-use std::io::{BufRead,BufReader};
+use std::io::BufRead;
 use std::io::Result;
 
 #[derive(Debug,PartialEq,PartialOrd)]

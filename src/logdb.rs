@@ -1,5 +1,4 @@
-use std::path::{Path};
-use std::fs::{File,OpenOptions};
+use std::fs::File;
 use std::io::{BufRead,BufReader,Seek,SeekFrom,Write};
 
 use crate::result::*;
@@ -16,14 +15,7 @@ pub struct LogDb {
 }
 
 impl LogDb {
-    pub fn open(path: &Path) -> Result<LogDb> {
-        let f = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(path)
-            .map_err(|e| KvsErrorKind::Io(e))?;
-
+    pub fn new(f: File) -> Result<LogDb> {
         Ok(LogDb {
             f: f,
         })

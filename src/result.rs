@@ -15,6 +15,18 @@ pub enum KvsErrorKind {
 
     #[fail(display = "Not Found: {}", _0)]
     NotFound(String),
+
+    #[fail(display = "{}", _0)]
+    GlobError(String),
+
+    #[fail(display = "{}", _0)]
+    ParseIntError(#[cause] std::num::ParseIntError),
+
+    #[fail(display = "{}", _0)]
+    Config(String),
+
+    #[fail(display = "{}", _0)]
+    InvalidPartition(usize),
 }
 
 #[derive(Debug)]

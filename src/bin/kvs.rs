@@ -52,6 +52,11 @@ fn main() {
                                           .index(1)
                                           .required(true)
                                           .help("key")))
+                          .subcommand(SubCommand::with_name("compact")
+                                      .about("compact log files")
+                                      .version(VERSION)
+                                      .author(AUTHOR)
+                                      )
                           .get_matches();
 
     
@@ -90,6 +95,10 @@ fn run(matches: ArgMatches) -> kvs::Result<()> {
         remove(path, key)?;
 
         Ok(())
+    } else if let Some(_matches) = matches.subcommand_matches("compact") {
+        compact(path)?;
+
+        Ok(())
     } else {
         if matches.is_present("version") {
             println!("{}", VERSION);
@@ -121,6 +130,14 @@ pub fn remove(path: &str, key: &str) -> kvs::Result<()> {
     let mut store = kvs::KvStore::open(&PathBuf::from(&path))?;
 
     store.remove(key.to_owned())?;
+
+    Ok(())
+}
+
+pub fn compact(path: &str) -> kvs::Result<()> {
+    let mut store = kvs::KvStore::open(&PathBuf::from(&path))?;
+
+    store.compact()?;
 
     Ok(())
 }

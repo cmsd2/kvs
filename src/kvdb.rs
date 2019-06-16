@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::fs::File;
 
 use crate::logdb::{self,LogDb,Offset};
 use crate::result::*;
@@ -43,10 +43,10 @@ pub struct KvDb {
 }
 
 impl KvDb {
-    pub fn open(path: &Path) -> Result<KvDb> {
+    pub fn new(file: File) -> Result<KvDb> {
         Ok(KvDb {
             parser: Parser,
-            logdb: LogDb::open(path)?,
+            logdb: LogDb::new(file)?,
         })
     }
 
