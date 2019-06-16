@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::logdb::{self,LogDb};
+use crate::logdb::{self,LogDb,Offset};
 use crate::result::*;
 use crate::command::*;
 
@@ -22,7 +22,7 @@ impl Parser {
 }
 
 pub trait Visitor {
-    fn command(&mut self, command: Command) -> Result<bool>;
+    fn command(&mut self, command: Command, pos: Offset) -> Result<bool>;
 }
 
 struct ParserVisitor<V: Visitor> {
@@ -31,9 +31,9 @@ struct ParserVisitor<V: Visitor> {
 }
 
 impl <V: Visitor> logdb::Visitor for ParserVisitor<V> {
-    fn line(&mut self, line: String) -> Result<bool> {
+    fn line(&mut self, line: String, pos: Offset) -> Result<bool> {
         let obj = self.parser.parse(&line)?;
-        self.inner.command(obj)
+        self.inner.command(obj, pos)
     }
 }
 
@@ -56,7 +56,13 @@ impl KvDb {
         Ok(parser.inner)
     }
 
-    pub fn append(&mut self, command: Command) -> Result<()> {
+    pub fn append(&mut self, command: Command) -> Result<Offset> {
         self.logdb.append(self.parser.encode(command)?)
+    }
+
+    pub fn read_offset(&mut self, offset: Offset) -> Result<Command> {
+        let line = self.logdb.read_offset(offset)?;
+        let command = self.parser.parse(&line)?;
+        Ok(command)
     }
 }

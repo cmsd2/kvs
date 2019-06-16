@@ -6,6 +6,7 @@ pub mod result;
 pub mod command;
 pub mod kvdb;
 pub mod logdb;
+pub mod lines;
 
 pub use result::*;
 use kvdb::{KvDb,Visitor};
@@ -13,13 +14,16 @@ use command::Command;
 
 pub const DEFAULT_FILE_NAME: &str = "kvs.json";
 
+use logdb::Offset;
+type OffsetIndex = BTreeMap<String,Offset>;
+
 pub struct KvStore {
     kvdb: KvDb,
-    store: BTreeMap<String,String>,
+    store: OffsetIndex,
 }
 
 struct Loader {
-    pub index: BTreeMap<String,String>,
+    pub index: OffsetIndex,
 }
 
 impl Loader {
@@ -31,10 +35,10 @@ impl Loader {
 }
 
 impl Visitor for Loader {
-    fn command(&mut self, c: Command) -> Result<bool> {
+    fn command(&mut self, c: Command, offset: Offset) -> Result<bool> {
         match c {
             Command::Set{key,value} => {
-                self.index.insert(key,value);
+                self.index.insert(key,offset);
             },
             Command::Remove{key} => {
                 self.index.remove(&key);
@@ -46,13 +50,29 @@ impl Visitor for Loader {
 
 impl KvStore {
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        self.store.insert(key.clone(),value.clone());
-        self.kvdb.append(Command::Set{key,value})?;
+        let pos = self.kvdb.append(Command::Set{key: key.clone(), value: value})?;
+        self.store.insert(key, pos);
         Ok(())
     }
     
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
+    pub fn get_offset(&mut self, key: String) -> Result<Option<Offset>> {
         Ok(self.store.get(&key).map(|v| v.to_owned()))
+    }
+
+    pub fn get(&mut self, key: String) -> Result<Option<String>> {
+        self.get_offset(key)
+            .and_then(
+                |offset| offset.map_or(Ok(None), 
+                    |offset| {
+                        match self.read_offset(offset)? {
+                            Command::Set {key: _key, value} => Ok(Some(value)),
+                            Command::Remove {key: _key} => Ok(None),
+                        }
+                    }))
+    }
+
+    pub fn read_offset(&mut self, offset: Offset) -> Result<Command> {
+        self.kvdb.read_offset(offset)
     }
 
     pub fn remove(&mut self, key: String) -> Result<()> {
@@ -64,10 +84,10 @@ impl KvStore {
         Ok(())
     }
 
-    pub fn new(kvdb: KvDb, index: BTreeMap<String,String>) -> KvStore {
+    pub fn new(kvdb: KvDb) -> KvStore {
         KvStore {
             kvdb: kvdb,
-            store: index,
+            store: BTreeMap::new(),
         }
     }
 
@@ -78,9 +98,15 @@ impl KvStore {
             path.to_owned()
         };
 
-        let mut kvdb = KvDb::open(&path)?;
-        let visitor = kvdb.visit(Loader::new())?;
-        let store = KvStore::new(kvdb, visitor.index);
+        let kvdb = KvDb::open(&path)?;
+        let mut store = KvStore::new(kvdb);
+        store.load()?;
         Ok(store)
+    }
+
+    pub fn load(&mut self) -> Result<()> {
+        let visitor = self.kvdb.visit(Loader::new())?;
+        self.store = visitor.index;
+        Ok(())
     }
 }
