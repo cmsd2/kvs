@@ -23,6 +23,12 @@ impl Parts {
         }
     }
 
+    pub fn size(&self, id: Id) -> Result<u64> {
+        Ok(fs::metadata(&self.path_for_id(id))
+            .map_err(|e| KvsErrorKind::Io(e))?
+            .len())
+    }
+
     pub fn create(&self) -> Result<(Id,File)> {
         let id = self.next_id()?;
 

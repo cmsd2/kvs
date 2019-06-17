@@ -21,21 +21,58 @@ use logdb::Offset;
 type OffsetIndex = BTreeMap<String,(Id,Offset)>;
 type PartitionsMap = BTreeMap<Id,KvDb>;
 
+#[derive(Clone,Debug)]
+pub struct KvStoreParams {
+    pub max_part_size: u64, // max partition file size in bytes before creating new partition file
+    pub compact_garbage_threshold: u32, // number of log entries per key before compaction is triggered
+}
+
+impl KvStoreParams {
+    pub fn new() -> KvStoreParams {
+        KvStoreParams::default()
+    }
+}
+impl Default for KvStoreParams {
+    fn default() -> KvStoreParams {
+        KvStoreParams {
+            max_part_size: 1_000_000,
+            compact_garbage_threshold: 10,
+        }
+    }
+}
+
+#[derive(Clone,Debug)]
+pub struct KvStoreMetrics {
+    pub entries: u64,
+}
+
+impl KvStoreMetrics {
+    pub fn new() -> KvStoreMetrics {
+        KvStoreMetrics {
+            entries: 0,
+        }
+    }
+}
+
 pub struct KvStore {
     parts: Parts,
     current_part: Id,
     kvdbs: PartitionsMap,
     store: OffsetIndex,
+    pub params: KvStoreParams,
+    pub metrics: KvStoreMetrics,
 }
 
 struct Loader {
     pub part: Id,
     pub index: OffsetIndex,
+    pub metrics: KvStoreMetrics,
 }
 
 impl Loader {
     pub fn new(part: Id, index: OffsetIndex) -> Loader {
         Loader {
+            metrics: KvStoreMetrics::new(),
             part: part,
             index: index,
         }
@@ -44,6 +81,8 @@ impl Loader {
 
 impl Visitor for Loader {
     fn command(&mut self, c: Command, offset: Offset) -> Result<bool> {
+        self.metrics.entries += 1;
+
         match c {
             Command::Set{key,value: _value} => {
                 self.index.insert(key, (self.part, offset));
@@ -52,6 +91,7 @@ impl Visitor for Loader {
                 self.index.remove(&key);
             },
         }
+
         Ok(true)
     }
 }
@@ -76,6 +116,10 @@ impl KvStore {
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let pos = self.cur_mut().append(Command::Set{key: key.clone(), value: value})?;
         self.store.insert(key, (self.current_part,pos));
+        self.metrics.entries += 1;
+
+        self.compact_if_needed()?;
+
         Ok(())
     }
     
@@ -104,7 +148,11 @@ impl KvStore {
             Err(KvsErrorKind::NotFound(key))?;
         } else {
             self.cur_mut().append(Command::Remove{key})?;
+            self.metrics.entries += 1;
         }
+        
+        self.compact_if_needed()?;
+
         Ok(())
     }
 
@@ -139,6 +187,9 @@ impl KvStore {
             current_part: current_id,
             kvdbs: kvdbs,
             store: BTreeMap::new(),
+            params: KvStoreParams::new(),
+            metrics: KvStoreMetrics::new(),
+
         })
     }
 
@@ -151,13 +202,34 @@ impl KvStore {
     pub fn load(&mut self) -> Result<()> {
         let mut index = BTreeMap::new();
 
+        let mut metrics = KvStoreMetrics::new();
+
         for (id, kvdb) in self.kvdbs.iter_mut() {
             let loader = Loader::new(*id, index);
             let visitor = kvdb.visit(loader)?;
             index = visitor.index;
+            metrics.entries += visitor.metrics.entries;
         }
         
         self.store = index;
+        self.metrics.entries = metrics.entries;
+
+        Ok(())
+    }
+
+    pub fn inefficiency(&self) -> u32 {
+        if self.store.len() == 0 {
+            0
+        } else {
+            (self.metrics.entries / (self.store.len() as u64)) as u32
+        }
+    }
+
+    pub fn compact_if_needed(&mut self) -> Result<()> {
+        if self.inefficiency() > self.params.compact_garbage_threshold {
+            self.compact()?
+        }
+
         Ok(())
     }
 
@@ -175,6 +247,24 @@ impl KvStore {
         self.store = index;
         self.current_part = id;
 
+        self.rotate_if_needed()?;
+
+        Ok(())
+    }
+
+    pub fn rotate_if_needed(&mut self) -> Result<()> {
+        if self.parts.size(self.current_part)? > self.params.max_part_size {
+            self.rotate()?;
+        }
+
+        Ok(())
+    }
+
+    pub fn rotate(&mut self) -> Result<()> {
+        let (id,file) = self.parts.create()?;
+        let kvdb = KvDb::new(file)?;
+        self.kvdbs.insert(id, kvdb);
+        self.current_part = id;
         Ok(())
     }
     
